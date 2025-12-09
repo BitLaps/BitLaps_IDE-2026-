@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>Simple Code IDE</title>
+</head>
+<body>
+    <div class="app-container">
+        <div class="top-bar">
+            <div class="app-title">
+                <i class="fas fa-code"></i>
+                <h1>Simple IDE</h1>
+                <span class="subtitle">by BitLaps</span>
+            </div>
+            
+            <div class="controls">
+                <input type="text" id="filename" placeholder="script.js" value="script.js">
+                
+                <select id="language">
+                    <option value="javascript">JavaScript</option>
+                    <option value="html">HTML</option>
+                    <option value="css">CSS</option>
+                    <option value="pseudocode">Pseudocode</option>
+                </select>
+                
+                <button id="themeToggle" class="theme-btn">
+                    <i class="fas fa-moon"></i>
+                </button>
+                
+                <button id="runBtn" class="run-btn">
+                    <i class="fas fa-play"></i> Run
+                </button>
+                
+                <button id="downloadBtn" class="download-btn">
+                    <i class="fas fa-download"></i>
+                </button>
+            </div>
+        </div>
+        <div class="editor-area">
+            <div id="editor"></div>
+        </div>
+        <div class="output-area">
+            <div class="output-header">
+                <h3><i class="fas fa-terminal"></i> Output</h3>
+                <button id="clearOutput" class="clear-btn">
+                    <i class="fas fa-times"></i> Clear
+                </button>
+            </div>
+            <div id="output"></div>
+        </div>
+        <div class="status-bar">
+            <span id="status">Ready</span>
+            <span id="lineInfo">Line 1, Column 1</span>
+            <span id="fileSize">0 chars</span>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/ace.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/mode-javascript.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/mode-html.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/mode-css.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/mode-text.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/theme-one_dark.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/theme-chrome.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/ext-language_tools.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
