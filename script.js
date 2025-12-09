@@ -2,6 +2,9 @@ let editor;
 let isDarkTheme = true;
 let currentCode = '';
 
+// Piston API configuration
+const PISTON_API = 'https://emkc.org/api/v2/piston/execute';
+
 window.onload = function() {
     initializeEditor();
     setupEventListeners();
@@ -100,7 +103,8 @@ function updateEditorMode(language) {
         'javascript': 'ace/mode/javascript',
         'html': 'ace/mode/html',
         'css': 'ace/mode/css',
-        'pseudocode': 'ace/mode/text'  
+        'pseudocode': 'ace/mode/text',
+        'cpp': 'ace/mode/c_cpp'
     };
     
     if (modeMap[language]) {
@@ -113,11 +117,25 @@ function updateDefaultCode(language) {
     const currentContent = editor.getValue().trim();
     const isEmpty = !currentContent || 
                     currentContent === '// Welcome to Simple IDE' ||
-                    currentContent.includes('// Start coding here');
+                    currentContent.includes('// Start coding here') ||
+                    currentContent === '// Welcome to C++ Mode';
     
     if (isEmpty) {
         const defaultCodes = {
-            'javascript': `// Welcome to Simple IDE`
+            'javascript': `// Welcome to Simple IDE`,
+            'cpp': `// Simple C++ Program
+#include <iostream>
+using namespace std;
+
+int main() {
+    cout << "Hello, C++!" << endl;
+    
+    for(int i = 1; i <= 3; i++) {
+        cout << "Count: " << i << endl;
+    }
+    
+    return 0;
+}`
         };
         
         if (defaultCodes[language]) {
@@ -134,7 +152,8 @@ function updateFileName() {
         'javascript': '.js',
         'html': '.html',
         'css': '.css',
-        'pseudocode': '.txt' 
+        'pseudocode': '.txt',
+        'cpp': '.cpp'
     };
     
     const ext = extensions[language] || '.txt';
@@ -149,7 +168,6 @@ function runCode() {
     
     updateStatus('Running...');
     clearOutput();
-    addOutput('info', `Running ${language.toUpperCase()} code...`, true);
     
     try {
         switch (language) {
@@ -165,6 +183,9 @@ function runCode() {
             case 'pseudocode':
                 runPseudocode(code);
                 break;
+            case 'cpp':
+                runCppWithPiston(code);
+                break;
             default:
                 addOutput('warning', `Language "${language}" not supported.`);
         }
@@ -172,6 +193,103 @@ function runCode() {
         addOutput('error', `Execution Error: ${error.message}`);
         updateStatus('Error');
     }
+}
+
+// ==============================================
+// SIMPLIFIED PISTON API C++ COMPILATION
+// ==============================================
+
+async function runCppWithPiston(code) {
+    try {
+        updateStatus('Compiling C++...');
+        
+        const payload = {
+            language: 'cpp',
+            version: '10.2.0',
+            files: [{ content: code }],
+            stdin: '',
+            args: [],
+            compile_timeout: 10000,
+            run_timeout: 5000
+        };
+        
+        const response = await fetch(PISTON_API, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        if (!response.ok) {
+            throw new Error(`API Error: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        
+        // Show ONLY the program output or errors
+        if (result.compile && result.compile.code !== 0) {
+            // Show compilation error
+            if (result.compile.output) {
+                showCleanError(result.compile.output);
+            } else if (result.compile.stderr) {
+                showCleanError(result.compile.stderr);
+            } else {
+                addOutput('error', 'Compilation failed');
+            }
+            updateStatus('Compilation failed');
+        } else if (result.run) {
+            // Show program output
+            if (result.run.stdout) {
+                showCleanOutput(result.run.stdout);
+            }
+            
+            // Show runtime errors if any
+            if (result.run.stderr) {
+                showCleanError(result.run.stderr);
+            }
+            
+            // Show exit code only if non-zero
+            if (result.run.code !== 0) {
+                addOutput('error', `Program exited with code: ${result.run.code}`);
+            }
+            
+            updateStatus('Execution completed');
+        }
+        
+    } catch (error) {
+        if (error.message.includes('network') || error.message.includes('fetch')) {
+            addOutput('error', 'Network error. No internet connection.');
+            addOutput('info', 'Cannot compile C++ without internet.');
+        } else {
+            addOutput('error', `Error: ${error.message}`);
+        }
+        updateStatus('Compilation failed');
+    }
+}
+
+// Show clean program output
+function showCleanOutput(output) {
+    const lines = output.split('\n');
+    lines.forEach(line => {
+        if (line.trim() !== '') {
+            addOutput('output', line);
+        }
+    });
+}
+
+// Show clean error output
+function showCleanError(errorOutput) {
+    const lines = errorOutput.split('\n');
+    lines.forEach(line => {
+        if (line.trim() !== '') {
+            if (line.includes('error:')) {
+                addOutput('error', line);
+            } else if (line.includes('warning:')) {
+                addOutput('warning', line);
+            } else {
+                addOutput('error', line);
+            }
+        }
+    });
 }
 
 function runJavaScript(code) {
@@ -203,6 +321,7 @@ function runJavaScript(code) {
         console.log = originalLog;
         console.error = originalError;
         console.warn = originalWarn;
+        
         if (logs.length === 0) {
             addOutput('success', 'Code executed successfully. No output.');
         } else {
@@ -226,12 +345,9 @@ function runHTML(code) {
             newWindow.document.write(code);
             newWindow.document.close();
             addOutput('success', '✅ HTML opened in new tab.');
-            addOutput('info', 'Check your browser for the HTML output.');
             updateStatus('HTML opened');
         } else {
             addOutput('warning', '⚠️ Popup blocked. Please allow popups to view HTML output.');
-            addOutput('info', 'HTML preview (first 1000 characters):');
-            addOutput('info', code.substring(0, 1000) + (code.length > 1000 ? '...' : ''));
             updateStatus('Popup blocked');
         }
     } catch (error) {
@@ -246,42 +362,14 @@ function runCSS(code) {
 <html>
 <head>
     <style>${code}</style>
-    <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            padding: 20px;
-            max-width: 800px;
-            margin: 0 auto;
-        }
-        .test-container {
-            border: 2px dashed #ccc;
-            padding: 20px;
-            margin: 20px 0;
-            border-radius: 8px;
-        }
-        .css-preview {
-            background: #f8f9fa;
-            padding: 15px;
-            border-radius: 5px;
-            font-family: monospace;
-            white-space: pre-wrap;
-            margin: 10px 0;
-        }
-    </style>
 </head>
 <body>
     <h2>CSS Preview</h2>
-    <p>Your CSS has been applied to this preview page.</p>
-    
     <div class="test-container">
-        <h3>Test Elements</h3>
         <button class="test-btn">Test Button</button>
-        <div class="test-box">Test div with class</div>
-        <p class="test-text">This is a paragraph to test text styles.</p>
+        <div class="test-box">Test div</div>
+        <p class="test-text">Test paragraph</p>
     </div>
-    
-    <h3>Your CSS Code:</h3>
-    <div class="css-preview">${code}</div>
 </body>
 </html>`;
         
@@ -290,45 +378,18 @@ function runCSS(code) {
             newWindow.document.write(testHTML);
             newWindow.document.close();
             addOutput('success', '✅ CSS preview opened in new tab.');
-            addOutput('info', 'Your CSS has been applied to test elements.');
             updateStatus('CSS preview opened');
         } else {
-            addOutput('warning', '⚠️ Popup blocked. Showing CSS analysis:');
-            analyzeCSS(code);
+            addOutput('warning', '⚠️ Popup blocked.');
+            updateStatus('Popup blocked');
         }
     } catch (error) {
         addOutput('error', `CSS Error: ${error.message}`);
     }
 }
 
-function analyzeCSS(code) {
-    // Analyze CSS and provide feedback
-    addOutput('info', 'CSS Analysis:');
-    
-    const rules = code.split('}').length - 1;
-    addOutput('info', `Found ${rules} CSS rule(s)`);
-    
-    if (code.includes('@media')) {
-        addOutput('info', '✅ Contains responsive media queries');
-    }
-    
-    if (code.includes('animation') || code.includes('@keyframes')) {
-        addOutput('info', '✅ Contains animations');
-    }
-    
-    if (code.includes('gradient')) {
-        addOutput('info', '✅ Contains gradients');
-    }
-    
-    addOutput('info', 'Your CSS code:');
-    addOutput('info', code.substring(0, 500) + (code.length > 500 ? '...' : ''));
-}
-
 function runPseudocode(code) {
     try {
-        addOutput('success', '📝 Pseudocode Execution');
-        addOutput('info', 'Pseudocode is interpreted for understanding, not executed.');
-
         const lines = code.split('\n');
         let variables = {};
         let output = [];
@@ -370,49 +431,16 @@ function runPseudocode(code) {
                     }
                     
                     variables[varName] = value;
-                    addOutput('info', `Set ${varName} = ${value}`);
                 }
-            }
-            
-            else if (trimmed.toUpperCase().startsWith('IF')) {
-                addOutput('info', `Line ${index + 1}: ${trimmed}`);
-            }
-
-            else if (trimmed.toUpperCase().includes('WHILE') || trimmed.toUpperCase().includes('FOR')) {
-                addOutput('info', `Line ${index + 1}: ${trimmed}`);
-            }
-
-            else if (trimmed.toUpperCase().startsWith('FUNCTION')) {
-                addOutput('info', `Line ${index + 1}: ${trimmed}`);
-            }
-            
-      
-            else if (trimmed.toUpperCase() === 'BEGIN' || trimmed.toUpperCase() === 'END') {
-         
-            }
-            
-       
-            else if (trimmed.length > 3 && !trimmed.startsWith('END')) {
-                addOutput('info', `Line ${index + 1}: ${trimmed}`);
             }
         });
         
-    
         if (output.length > 0) {
-            addOutput('success', 'Simulated Output:');
             output.forEach(msg => {
-                addOutput('success', `  ${msg}`);
-            });
-        }
-
-        if (Object.keys(variables).length > 0) {
-            addOutput('info', 'Final Variables:');
-            Object.keys(variables).forEach(varName => {
-                addOutput('info', `  ${varName} = ${variables[varName]}`);
+                addOutput('success', msg);
             });
         }
         
-        addOutput('success', '✅ Pseudocode interpretation complete');
         updateStatus('Pseudocode interpreted');
         
     } catch (error) {
@@ -429,7 +457,8 @@ function downloadCode() {
         'javascript': '.js',
         'html': '.html',
         'css': '.css',
-        'pseudocode': '.txt'  
+        'pseudocode': '.txt',
+        'cpp': '.cpp'
     };
     
     const ext = extensions[language] || '.txt';
@@ -471,7 +500,7 @@ function addOutput(type, message, showTimestamp = false) {
     
     output.appendChild(div);
     
-  
+    // Auto-scroll to bottom
     output.scrollTop = output.scrollHeight;
 }
 
@@ -490,7 +519,6 @@ function updateFileSize() {
 function updateStatus(message) {
     document.getElementById('status').textContent = message;
 }
-
 
 document.addEventListener('DOMContentLoaded', function() {
     document.documentElement.setAttribute('data-theme', isDarkTheme ? 'dark' : 'light');
