@@ -2,8 +2,12 @@ let editor;
 let isDarkTheme = true;
 let currentCode = '';
 
-// Piston API configuration
-const PISTON_API = 'https://emkc.org/api/v2/piston/execute';
+const JUDGE0_API = 'https://ce.judge0.com';
+const JUDGE0_LANGS = {
+    cpp:    { label: 'C++',    match: /^C\+\+ \(GCC/i, fallback: 54 }, 
+    python: { label: 'Python', match: /^Python \(3/i,  fallback: 71 }
+};
+const judge0Ids = {};
 
 window.onload = function() {
     initializeEditor();
@@ -69,8 +73,10 @@ function loadPreferences() {
         updateTheme();
     }
     const savedLanguage = localStorage.getItem('ide-language');
-    if (savedLanguage) {
-        document.getElementById('language').value = savedLanguage;
+    const languageSelect = document.getElementById('language');
+    // Ignore saved languages that no longer exist (html/css were removed)
+    if (savedLanguage && [...languageSelect.options].some(o => o.value === savedLanguage)) {
+        languageSelect.value = savedLanguage;
         updateEditorMode(savedLanguage);
     }
 }
@@ -101,10 +107,9 @@ function updateTheme() {
 function updateEditorMode(language) {
     const modeMap = {
         'javascript': 'ace/mode/javascript',
-        'html': 'ace/mode/html',
-        'css': 'ace/mode/css',
         'pseudocode': 'ace/mode/text',
-        'cpp': 'ace/mode/c_cpp'
+        'cpp': 'ace/mode/c_cpp',
+        'python': 'ace/mode/python'
     };
     
     if (modeMap[language]) {
@@ -113,17 +118,14 @@ function updateEditorMode(language) {
     }
 }
 
-function updateDefaultCode(language) {
-    const currentContent = editor.getValue().trim();
-    const isEmpty = !currentContent || 
-                    currentContent === '// Welcome to Simple IDE' ||
-                    currentContent.includes('// Start coding here') ||
-                    currentContent === '// Welcome to C++ Mode';
-    
-    if (isEmpty) {
-        const defaultCodes = {
-            'javascript': `// Welcome to Simple IDE`,
-            'cpp': `// Simple C++ Program
+const DEFAULT_CODES = {
+    'javascript': `// Welcome to Simple IDE!`,
+    'python': `# Simple Python Program
+print("Hello, Python!")
+
+for i in range(1, 4):
+    print("Count:", i)`,
+    'cpp': `// Simple C++ Program
 #include <iostream>
 using namespace std;
 
@@ -136,11 +138,17 @@ int main() {
     
     return 0;
 }`
-        };
-        
-        if (defaultCodes[language]) {
-            editor.setValue(defaultCodes[language], -1);
-        }
+};
+
+function updateDefaultCode(language) {
+    const currentContent = editor.getValue().trim();
+ 
+    const isUntouched = !currentContent ||
+                        currentContent === '// Welcome to Simple IDE' ||
+                        Object.values(DEFAULT_CODES).some(code => code.trim() === currentContent);
+
+    if (isUntouched && DEFAULT_CODES[language]) {
+        editor.setValue(DEFAULT_CODES[language], -1);
     }
 }
 
@@ -150,10 +158,9 @@ function updateFileName() {
     let filename = filenameInput.value.trim();
     const extensions = {
         'javascript': '.js',
-        'html': '.html',
-        'css': '.css',
         'pseudocode': '.txt',
-        'cpp': '.cpp'
+        'cpp': '.cpp',
+        'python': '.py'
     };
     
     const ext = extensions[language] || '.txt';
@@ -174,17 +181,14 @@ function runCode() {
             case 'javascript':
                 runJavaScript(code);
                 break;
-            case 'html':
-                runHTML(code);
-                break;
-            case 'css':
-                runCSS(code);
-                break;
             case 'pseudocode':
                 runPseudocode(code);
                 break;
             case 'cpp':
-                runCppWithPiston(code);
+                runWithJudge0(code, 'cpp');
+                break;
+            case 'python':
+                runWithJudge0(code, 'python');
                 break;
             default:
                 addOutput('warning', `Language "${language}" not supported.`);
@@ -195,88 +199,123 @@ function runCode() {
     }
 }
 
-// ==============================================
-// SIMPLIFIED PISTON API C++ COMPILATION
-// ==============================================
 
-async function runCppWithPiston(code) {
+function toBase64(str) {
+    const bytes = new TextEncoder().encode(str);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+}
+
+function fromBase64(b64) {
+    if (!b64) return '';
+    const bin = atob(b64);
+    const bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+}
+
+// Pick the newest matching runtime the server offers
+async function getJudge0LanguageId(langKey) {
+    if (judge0Ids[langKey]) return judge0Ids[langKey];
+    const cfg = JUDGE0_LANGS[langKey];
     try {
-        updateStatus('Compiling C++...');
-        
+        const res = await fetch(`${JUDGE0_API}/languages`);
+        if (res.ok) {
+            const langs = await res.json();
+            const found = langs.filter(l => cfg.match.test(l.name)).sort((a, b) => b.id - a.id);
+            if (found.length) {
+                judge0Ids[langKey] = found[0].id;
+                return judge0Ids[langKey];
+            }
+        }
+    } catch (e) { /* fall through to fallback */ }
+    judge0Ids[langKey] = cfg.fallback;
+    return judge0Ids[langKey];
+}
+
+async function runWithJudge0(code, langKey) {
+    const cfg = JUDGE0_LANGS[langKey];
+    const runBtn = document.getElementById('runBtn');
+    runBtn.disabled = true;
+    try {
+        updateStatus(langKey === 'cpp' ? 'Compiling C++...' : 'Running Python...');
+
+        const languageId = await getJudge0LanguageId(langKey);
+
         const payload = {
-            language: 'cpp',
-            version: '10.2.0',
-            files: [{ content: code }],
-            stdin: '',
-            args: [],
-            compile_timeout: 10000,
-            run_timeout: 5000
+            language_id: languageId,
+            source_code: toBase64(code),
+            cpu_time_limit: 5,
+            wall_time_limit: 10
         };
-        
-        const response = await fetch(PISTON_API, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        
+
+        const response = await fetch(
+            `${JUDGE0_API}/submissions?base64_encoded=true&wait=true&fields=stdout,stderr,compile_output,message,status,time,memory`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }
+        );
+
         if (!response.ok) {
+            if (response.status === 429) {
+                throw new Error('Too many requests right now. Wait a few seconds and press Run again.');
+            }
             throw new Error(`API Error: ${response.status}`);
         }
-        
+
         const result = await response.json();
-        
-        // Show ONLY the program output or errors
-        if (result.compile && result.compile.code !== 0) {
-            // Show compilation error
-            if (result.compile.output) {
-                showCleanError(result.compile.output);
-            } else if (result.compile.stderr) {
-                showCleanError(result.compile.stderr);
-            } else {
-                addOutput('error', 'Compilation failed');
-            }
+        const statusId = result.status ? result.status.id : 0;
+        const stdout = fromBase64(result.stdout);
+        const stderr = fromBase64(result.stderr);
+        const compileOutput = fromBase64(result.compile_output);
+        const message = fromBase64(result.message);
+
+        if (statusId === 6) {
+            // Compilation error
+            showCleanError(compileOutput || 'Compilation failed');
             updateStatus('Compilation failed');
-        } else if (result.run) {
-            // Show program output
-            if (result.run.stdout) {
-                showCleanOutput(result.run.stdout);
-            }
-            
-            // Show runtime errors if any
-            if (result.run.stderr) {
-                showCleanError(result.run.stderr);
-            }
-            
-            // Show exit code only if non-zero
-            if (result.run.code !== 0) {
-                addOutput('error', `Program exited with code: ${result.run.code}`);
-            }
-            
-            updateStatus('Execution completed');
+            return;
         }
-        
-    } catch (error) {
-        if (error.message.includes('network') || error.message.includes('fetch')) {
-            addOutput('error', 'Network error. No internet connection.');
-            addOutput('info', 'Cannot compile C++ without internet.');
+
+        if (stdout) showCleanOutput(stdout);
+        if (stderr) showCleanError(stderr);
+
+        if (statusId === 3) {
+            if (!stdout && !stderr) addOutput('info', 'Program ran successfully (no output).');
+            const t = result.time ? ` in ${result.time}s` : '';
+            updateStatus(`Execution completed${t}`);
+        } else if (statusId === 5) {
+            addOutput('error', 'Time limit exceeded (infinite loop, or waiting for input?).');
+            updateStatus('Time limit exceeded');
         } else {
-            addOutput('error', `Error: ${error.message}`);
+            const desc = result.status ? result.status.description : 'Unknown error';
+            if (!stderr || message) addOutput('error', `${desc}${message ? ': ' + message : ''}`);
+            updateStatus('Execution failed');
+        }
+
+    } catch (error) {
+        if (error instanceof TypeError) {
+            // fetch() itself failed: offline, blocked, or server unreachable
+            addOutput('error', `Could not reach the ${cfg.label} runner service.`);
+            addOutput('info', 'Check your internet connection, then try again.');
+        } else {
+            addOutput('error', error.message);
         }
         updateStatus('Compilation failed');
+    } finally {
+        runBtn.disabled = false;
     }
 }
 
-// Show clean program output
+
 function showCleanOutput(output) {
-    const lines = output.split('\n');
-    lines.forEach(line => {
-        if (line.trim() !== '') {
-            addOutput('output', line);
-        }
-    });
+    
+    addOutput('success', output.replace(/\n$/, ''));
 }
 
-// Show clean error output
+
 function showCleanError(errorOutput) {
     const lines = errorOutput.split('\n');
     lines.forEach(line => {
@@ -335,56 +374,6 @@ function runJavaScript(code) {
     } catch (error) {
         addOutput('error', `JavaScript Error: ${error.message}`);
         updateStatus('Execution failed');
-    }
-}
-
-function runHTML(code) {
-    try {
-        const newWindow = window.open();
-        if (newWindow) {
-            newWindow.document.write(code);
-            newWindow.document.close();
-            addOutput('success', '✅ HTML opened in new tab.');
-            updateStatus('HTML opened');
-        } else {
-            addOutput('warning', '⚠️ Popup blocked. Please allow popups to view HTML output.');
-            updateStatus('Popup blocked');
-        }
-    } catch (error) {
-        addOutput('error', `HTML Error: ${error.message}`);
-    }
-}
-
-function runCSS(code) {
-    try {
-        const testHTML = `
-<!DOCTYPE html>
-<html>
-<head>
-    <style>${code}</style>
-</head>
-<body>
-    <h2>CSS Preview</h2>
-    <div class="test-container">
-        <button class="test-btn">Test Button</button>
-        <div class="test-box">Test div</div>
-        <p class="test-text">Test paragraph</p>
-    </div>
-</body>
-</html>`;
-        
-        const newWindow = window.open();
-        if (newWindow) {
-            newWindow.document.write(testHTML);
-            newWindow.document.close();
-            addOutput('success', '✅ CSS preview opened in new tab.');
-            updateStatus('CSS preview opened');
-        } else {
-            addOutput('warning', '⚠️ Popup blocked.');
-            updateStatus('Popup blocked');
-        }
-    } catch (error) {
-        addOutput('error', `CSS Error: ${error.message}`);
     }
 }
 
@@ -455,10 +444,9 @@ function downloadCode() {
     
     const extensions = {
         'javascript': '.js',
-        'html': '.html',
-        'css': '.css',
         'pseudocode': '.txt',
-        'cpp': '.cpp'
+        'cpp': '.cpp',
+        'python': '.py'
     };
     
     const ext = extensions[language] || '.txt';
@@ -492,15 +480,12 @@ function clearOutput() {
 
 function addOutput(type, message, showTimestamp = false) {
     const output = document.getElementById('output');
-    const timestamp = showTimestamp ? `<small>${new Date().toLocaleTimeString()}</small> ` : '';
-    
     const div = document.createElement('div');
     div.className = `output-message output-${type}`;
-    div.innerHTML = `${timestamp}${message}`;
+    div.textContent = (showTimestamp ? `[${new Date().toLocaleTimeString()}] ` : '') + message;
     
     output.appendChild(div);
-    
-    // Auto-scroll to bottom
+
     output.scrollTop = output.scrollHeight;
 }
 
