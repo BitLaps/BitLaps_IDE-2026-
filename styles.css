@@ -1,4 +1,3 @@
-/* CSS Reset */
 * {
     margin: 0;
     padding: 0;
@@ -210,6 +209,12 @@ button {
     height: 100%;
     font-size: 14px;
     line-height: 1.5;
+}
+
+button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
 }
 
 /* Output Area */
